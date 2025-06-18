@@ -1,0 +1,406 @@
+import pygame
+import random
+import sys
+from pygame.locals import *
+
+
+pygame.init()
+
+#Screen size
+WIDTH, HEIGHT = 800, 600
+screen = pygame.display.set_mode((WIDTH, HEIGHT), pygame.RESIZABLE)
+pygame.display.set_caption("SkyTyper!")
+
+#Backgrounds
+SKYDAY = pygame.image.load("sky_day.jpg")
+SKYNIGHT = pygame.image.load("sky_night.jpg") 
+background_image = SKYDAY  #Default
+background_scaled = pygame.transform.scale(background_image, (WIDTH, HEIGHT))
+
+#Colors
+WHITE = (255, 255, 255)
+BLACK = (0, 0, 0)
+RED = (255, 71, 77)
+BLUE = (95, 144, 250)
+GREEN = (57, 248, 72)
+PINK = (255, 105, 180)
+GRAY = (251, 251, 251)
+
+#Fonts
+font = pygame.font.Font("PressStart2P-Regular.ttf", 32)
+small_font = pygame.font.Font("PressStart2P-Regular.ttf", 24)
+
+#Clock for controlling frame rate
+clock = pygame.time.Clock()
+
+#Game states
+START = "start"
+SETTINGS = "settings"
+PLAYING = "playing"
+GAME_OVER = "game_over"
+game_state = START
+
+
+
+#Word lists
+word_list = ["apple", "banana", "cat", "dog", "elephant", "flower", "grapes", "idea", "juice"]
+word_list_hard = ["algorithm", "binary", "california", "dragonfruit", "encryption", "firewall", "gateway", "hypertext"]
+
+#Load heart images
+HEART_IMAGE = pygame.image.load("heart.png").convert_alpha()  # Ensure you have a heart.png file
+EMPTY_HEART_IMAGE = pygame.image.load("empty_heart.png").convert_alpha()  # Ensure you have an empty_heart.png file
+HEART_SIZE = 40  # Size of the heart images
+
+#High score system
+def load_high_score():
+    try:
+        with open("high_score.txt", "r") as file:
+            return int(file.read())
+    except FileNotFoundError:
+        return 0
+
+def save_high_score(score):
+    with open("high_score.txt", "w") as file:
+        file.write(str(score))
+
+high_score = load_high_score()
+
+class FallingWord:
+    def __init__(self, text, speed, is_hard=False):
+        self.text = text
+        self.speed = speed
+        self.width = font.size(text)[0]  #Get the width 
+        self.height = font.size(text)[1]  #Get the height
+        self.x = random.randint(50, WIDTH - self.width - 50)  
+        self.y = 0
+        self.progress = 0  #Track how many letters have been typed
+        self.completed = False  #Track if the word is fully typed
+        self.completion_time = 0  #Track when completed
+        self.is_hard = is_hard
+    def check_completion(self):
+        if self.progress == len(self.text):
+            self.completed = True
+            self.completion_time = pygame.time.get_ticks()
+            self.progress = 0
+    def move(self):
+        if not self.completed:
+            self.y += self.speed
+
+    def draw(self, screen):
+        if self.completed:
+            fadetime = 750
+            #Glow red for hard words, green for normal words
+            elapsed_time = pygame.time.get_ticks() - self.completion_time
+            if elapsed_time < fadetime:
+                alpha = max(0, 255 - int(255 * (elapsed_time / fadetime)))  #Fade effect
+                fade_up = int(30 * (elapsed_time / fadetime))  #Move upward while fading
+                color = RED if self.is_hard else GREEN
+                text_surface = font.render(self.text, True, color)
+                text_surface.set_alpha(alpha)
+                screen.blit(text_surface, (self.x, (self.y - fade_up)))
+            return
+
+        #Color typed part in blue (pink for hard words)
+        correct_part = self.text[:self.progress]
+        color = PINK if self.is_hard else BLUE
+        correct_surface = font.render(correct_part, True, color)
+        screen.blit(correct_surface, (self.x, self.y))
+
+        #Render the remaining part in black
+        remaining_part = self.text[self.progress:]
+        remaining_surface = font.render(remaining_part, True, BLACK)
+        screen.blit(remaining_surface, (self.x + correct_surface.get_width(), self.y))
+
+    def off_screen(self):
+        return self.y > HEIGHT
+
+
+    def get_rect(self):
+        return pygame.Rect(self.x, self.y, self.width, self.height)
+
+#Function to check if a new word overlaps with existing words
+def is_overlapping(new_word, existing_words):
+    new_rect = new_word.get_rect()
+    for word in existing_words:
+        if new_rect.colliderect(word.get_rect()):
+            return True
+    return False
+
+#Function to count instances of a word on the screen
+def count_word_instances(word_text):
+    return sum(1 for word in falling_words if word.text == word_text)
+
+# Function to draw a button
+def draw_button(text, x, y, width, height, active_color, inactive_color, border_color, hover=False):
+    # Draw the border (slightly larger than the button)
+    border_rect = pygame.Rect(x - 2, y - 2, width + 4, height + 4)
+    pygame.draw.rect(screen, border_color, border_rect)
+
+    # Draw the button
+    color = active_color if hover else inactive_color
+    button_rect = pygame.Rect(x, y, width, height)
+    pygame.draw.rect(screen, color, button_rect)
+
+    # Draw the text
+    text_surface = small_font.render(text, True, BLACK)
+    text_rect = text_surface.get_rect(center=(x + width / 2, y + height / 2))
+    screen.blit(text_surface, text_rect)
+
+# Function to resize the screen
+def resize_screen(width, height):
+    global WIDTH, HEIGHT, screen, background_scaled
+    WIDTH, HEIGHT = width, height
+    screen = pygame.display.set_mode((WIDTH, HEIGHT), pygame.RESIZABLE)
+    background_scaled = pygame.transform.scale(background_image, (WIDTH, HEIGHT))
+
+#Function to draw hearts
+def draw_hearts(lives):
+    for i in range(3):  
+        x = WIDTH - (3 - i) * (HEART_SIZE + 20) 
+        y = 45
+        if i < lives:
+            screen.blit(HEART_IMAGE, (x, y))  
+        else:
+            screen.blit(EMPTY_HEART_IMAGE, (x, y))  
+
+#Game variables
+lives = 3
+score = 0
+falling_words = []
+word_speed = 1
+spawn_rate = 2
+word_speed_add = 0.0001
+spawn_rate_add = 0.0001
+input_text = ""
+button_width = 300
+start_time = pygame.time.get_ticks()
+MAX_WORDS_ON_SCREEN = 10
+# Backspace continuous deletion 
+backspace_held = False
+backspace_start_time = 0
+last_backspace_time = 0
+BACKSPACE_HOLD = 500
+BACKSPACE_REPEAT = 100
+
+clear_input = False  
+is_fullscreen = False
+windowed_size = (WIDTH, HEIGHT)
+
+#Main loop
+running = True
+while running:
+    mouse_pos = pygame.mouse.get_pos()
+    mouse_click = pygame.mouse.get_pressed()
+    current_time = pygame.time.get_ticks()
+
+    for event in pygame.event.get():
+        if event.type == pygame.QUIT:
+            running = False
+        elif event.type == pygame.VIDEORESIZE:
+            # Handle screen resizing
+            resize_screen(event.w, event.h)
+
+        elif event.type == pygame.KEYDOWN:
+            if game_state == PLAYING:
+
+                if event.key == pygame.K_BACKSPACE:
+                    input_text = input_text[:-1]  
+                    backspace_held = True
+                    backspace_start_time = current_time
+                else:
+                    if event.unicode.isalpha():
+                        if clear_input:
+                            input_text = ""
+                            clear_input = False
+                        input_text += event.unicode  #add typed character
+                    
+                    completed_word = False
+
+                    #Update for words that match the input
+                    for word in falling_words:
+                        if word.text.startswith(input_text):
+                            word.progress = len(input_text)
+                            word.check_completion()
+                            if word.completed:
+                                if word.is_hard and lives < 3:
+                                    lives += 1
+                                score += 500 if word.is_hard else 100
+                                clear_input = True
+                                completed_word = True
+                        else:
+                            word.progress = 0  #Reset progress if input doesn't match
+                    #Clear input when word is completed
+                    if completed_word and clear_input:
+                        input_text = ""
+                        clear_input = False
+        #Stop deleting
+        elif event.type == pygame.KEYUP:
+            if event.key == pygame.K_BACKSPACE:
+                backspace_held = False
+
+    #Held Deletion    
+    if backspace_held and game_state == PLAYING:
+        if current_time - backspace_start_time >= BACKSPACE_HOLD:
+            if current_time - last_backspace_time >= BACKSPACE_REPEAT:
+                if input_text:
+                    input_text = input_text[:-1]
+                    last_backspace_time = current_time
+                for word in falling_words:
+                    if word.text.startswith(input_text):
+                        word.progress = len(input_text)
+                    else:
+                        word.progress = 0
+
+
+    #Clear Screen
+    screen.blit(background_scaled, (0, 0))
+
+    #Title Screen
+    if game_state == START:
+
+        title_surface = font.render("SkyTyper!", True, BLACK)
+        title_rect = title_surface.get_rect(center=(WIDTH // 2, HEIGHT // 4))
+        screen.blit(title_surface, title_rect)
+
+        #Start button
+        start_button = pygame.Rect(WIDTH // 2 - button_width // 2, HEIGHT // 2 - 50, button_width, 50)
+        draw_button("Start", start_button.x, start_button.y, start_button.width, start_button.height, GREEN, GRAY, GREEN, start_button.collidepoint(mouse_pos))
+        if start_button.collidepoint(mouse_pos) and mouse_click[0]:
+            game_state = PLAYING
+            lives = 3  
+            score = 0  
+            falling_words = []  
+            input_text = ''
+            start_time = pygame.time.get_ticks()  
+
+        # Settings button
+        settings_button = pygame.Rect(WIDTH // 2 - button_width // 2, HEIGHT // 2 + 50, button_width, 50)
+        draw_button("Settings", settings_button.x, settings_button.y, settings_button.width, settings_button.height, BLUE, GRAY, BLUE, settings_button.collidepoint(mouse_pos))
+        if settings_button.collidepoint(mouse_pos) and mouse_click[0]:
+            game_state = SETTINGS
+            
+
+    elif game_state == SETTINGS:
+        # Draw settings screen
+        title_surface = font.render("Settings", True, BLACK)
+        title_rect = title_surface.get_rect(center=(WIDTH // 2, HEIGHT // 4))
+        screen.blit(title_surface, title_rect)
+
+        # Day background button
+        day_button = pygame.Rect(WIDTH // 2 - button_width // 2, HEIGHT // 2-100, button_width, 50)
+        draw_button("Day time", day_button.x, day_button.y, day_button.width, day_button.height, BLUE, GRAY, BLUE, day_button.collidepoint(mouse_pos))
+        if day_button.collidepoint(mouse_pos) and mouse_click[0]:
+            background_image = SKYDAY  # Set to day background
+            background_scaled = pygame.transform.scale(background_image, (WIDTH, HEIGHT))
+
+        # Night background button
+        night_button = pygame.Rect(WIDTH // 2 - button_width // 2, HEIGHT // 2, button_width, 50)
+        draw_button("Night time ", night_button.x, night_button.y, night_button.width, night_button.height, BLUE, GRAY, BLUE, night_button.collidepoint(mouse_pos))
+        if night_button.collidepoint(mouse_pos) and mouse_click[0]:
+            background_image = SKYNIGHT  # Set to night background
+            background_scaled = pygame.transform.scale(background_image, (WIDTH, HEIGHT))
+
+        # Full-screen button
+        fullscreen_button = pygame.Rect(WIDTH // 2 - button_width // 2, HEIGHT // 2 + 100, button_width, 50)
+        draw_button("Display", fullscreen_button.x, fullscreen_button.y, fullscreen_button.width, fullscreen_button.height, BLUE, GRAY, BLUE, fullscreen_button.collidepoint(mouse_pos))
+        if fullscreen_button.collidepoint(mouse_pos) and mouse_click[0]:
+            if not is_fullscreen:
+                windowed_size = (WIDTH, HEIGHT)  # Save current window size
+                screen = pygame.display.set_mode((0, 0), pygame.FULLSCREEN)
+                WIDTH, HEIGHT = screen.get_size()
+                is_fullscreen = True
+            else:
+                screen = pygame.display.set_mode(windowed_size, pygame.RESIZABLE)
+                WIDTH, HEIGHT = windowed_size
+                is_fullscreen = False
+            background_scaled = pygame.transform.scale(background_image, (WIDTH, HEIGHT))
+
+        # Back button
+        back_button = pygame.Rect(WIDTH // 2 - button_width // 2, HEIGHT // 2 + 200, button_width, 50)
+        draw_button("Back", back_button.x, back_button.y, back_button.width, back_button.height, RED, GRAY, RED, back_button.collidepoint(mouse_pos))
+        if back_button.collidepoint(mouse_pos) and mouse_click[0]:
+            game_state = START
+
+    elif game_state == PLAYING:
+        # Add new words randomly, ensuring no duplicates and no overlaps
+        if random.randint(1, 100) < spawn_rate and len(falling_words) < MAX_WORDS_ON_SCREEN:
+            is_hard = random.randint(1, 20) == 1
+            word_pool = word_list_hard if is_hard else word_list
+            new_word_text = random.choice(word_pool)
+            if count_word_instances(new_word_text) < 1:
+                speed = word_speed * 1.25 if is_hard else word_speed  # Hard words fall faster
+                new_word = FallingWord(new_word_text, speed, is_hard)
+
+                # Ensure the new word does not overlap with existing words
+                attempts = 0
+                while is_overlapping(new_word, falling_words) and attempts < 100:
+                    new_word.x = random.randint(50, WIDTH - new_word.width - 50)
+                    attempts += 1
+
+                if attempts < 100:  # Only add the word if a valid position is found
+                    falling_words.append(new_word)
+
+        # Update word positions and remove completed words after 1 second
+        for word in falling_words[:]:  # Iterate over a copy of the list to safely remove items
+            word.move()
+            if word.off_screen():
+                lives -= 1
+                falling_words.remove(word)
+                if lives == 0:
+                    game_state = GAME_OVER  # Switch to game over screen
+            elif word.completed and pygame.time.get_ticks() - word.completion_time >= 1000:
+                falling_words.remove(word)  # Remove the word after glowing for 1 second
+
+        #Increase speed over time
+        word_speed += word_speed_add
+        spawn_rate += spawn_rate_add
+
+        #Draw falling words
+        for word in falling_words:
+            word.draw(screen)
+
+        #Draw input text
+        input_surface = font.render(input_text, True, WHITE)
+        screen.blit(input_surface, (10, HEIGHT - 50))
+
+        #Draw score, timer, and hearts
+        elapsed_time = (pygame.time.get_ticks() - start_time) // 1000  # Convert to seconds
+        score_surface = font.render(f"Score: {score}", True, BLACK)
+        timer_surface = font.render(f"Time: {elapsed_time}", True, BLACK)
+        screen.blit(score_surface, (10, 10))
+        screen.blit(timer_surface, (WIDTH - 275, 10))
+        draw_hearts(lives)
+
+
+    elif game_state == GAME_OVER:
+        #Draw game over screen
+        title_surface = font.render("Game Over", True, BLACK)
+        title_rect = title_surface.get_rect(center=(WIDTH // 2, HEIGHT // 4))
+        screen.blit(title_surface, title_rect)
+
+        #Display final score and high score
+        if score > high_score:
+            save_high_score(score)
+            high_score = score
+        high_score_surface = font.render(f"High Score: {high_score}", True, BLACK)
+        screen.blit(high_score_surface, (WIDTH // 2 - 250, HEIGHT // 2 + 50))
+
+        #Return to home button
+        home_button = pygame.Rect(WIDTH // 2 - button_width // 2, HEIGHT // 2 + 150, button_width, 50)
+        draw_button("Home", home_button.x, home_button.y, home_button.width, home_button.height, BLUE, GRAY, BLUE, home_button.collidepoint(mouse_pos))
+        if home_button.collidepoint(mouse_pos) and mouse_click[0]:
+            game_state = START
+            lives = 3  #Reset lives
+            score = 0  #Reset score
+            falling_words = []  #Clear falling words
+            word_speed = 1  #Reset word speed
+            spawn_rate = 2  #Reset spawn rate
+
+
+    #Update the display 60fps
+    pygame.display.flip()
+    clock.tick(60)
+
+#Quit Pygame
+pygame.quit()
+sys.exit()
