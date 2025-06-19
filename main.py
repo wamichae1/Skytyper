@@ -256,6 +256,15 @@ windowed_size = (WIDTH, HEIGHT)
 
 #Main loop
 async def main():
+
+    global input_text, clear_input, backspace_held, backspace_start_time, last_backspace_time, BACKSPACE_HOLD, BACKSPACE_REPEAT
+    global combo_active, combo_count, combo_start_time, combo_lost, last_combo, in_a_row, combo_display_time
+    global player_name, active_input, input_box
+    global game_state, lives, score, falling_words, word_speed, spawn_rate, word_speed_add, spawn_rate_add, MAX_WORDS_ON_SCREEN
+    global WIDTH, HEIGHT, screen, background_image, background_scaled, text_color, is_fullscreen, windowed_size
+    global HEART_IMAGE, EMPTY_HEART_IMAGE, HEART_SIZE
+    global font, small_font, clock, button_width
+
     running = True
     while running:
         mouse_pos = pygame.mouse.get_pos()
@@ -333,10 +342,6 @@ async def main():
                     elif len(player_name) < 20 and event.unicode.isprintable():
                         player_name += event.unicode
             
-            elif event.type == pygame.KEYUP:
-                if game_state == PLAYING and event.key == pygame.K_BACKSPACE:
-                    # Stop deleting
-                    backspace_held = False
 
             elif event.type == pygame.MOUSEBUTTONDOWN:
                 if game_state == ENTER_NAME:
@@ -598,7 +603,5 @@ async def main():
         clock.tick(60)
 
 if __name__ == "__main__":
-    if hasattr(sys, "_called_from_pyodide"):
-        asyncio.run(main())
-    else:
-        ayncio.run(main())
+    asyncio.run(main())
+
