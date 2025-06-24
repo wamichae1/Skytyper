@@ -51,7 +51,7 @@ INSTRUCTIONS = "instructions"
 game_state = START
 
 #Leaderboard sheets
-SHEET_URL = "https://sheetdb.io/api/v1/edxt1oxhbgexd"
+SHEET_URL = 'https://sheetdb.io/api/v1/edxt1oxhbgexd'
 current_leaderboard = []
 submitting_score = False
 score_submitted = False
@@ -586,9 +586,9 @@ async def main():
             draw_hearts(lives)
             draw_combo(combo_active, combo_count, combo_lost, combo_start_time, last_combo, combo_display_time)
 
-
         elif game_state == ENTER_NAME:
 
+            
             if submitting_score:
                 loading_surface = small_font.render("Submitting Score...", True, text_color)
                 loading_rect = loading_surface.get_rect(center=(WIDTH // 2, HEIGHT // 2 + 90))
@@ -614,23 +614,31 @@ async def main():
             
             hovering = home_button.collidepoint(mouse_pos)
             draw_button("Submit", home_button.x, home_button.y, home_button.width, home_button.height, BLUE if is_name_entered else GRAY, hovering)
+            
+
+            # Please work 
+            print("Hovering:", hovering)
+            print("Mouse click:", mouse_click[0])
+            print("Name entered:", is_name_entered)
+            print("Already submitting:", submitting_score)
+
 
             if hovering and mouse_click[0] and is_name_entered and not submitting_score:
+                print("Clicked Submit")
                 submitting_score = True
 
                 async def submit_and_load():
-                    global current_leaderboard, score_submitted, submitting_score
+                    global current_leaderboard, score_submitted, submitting_score, game_state
 
+                    print(f"Submitting score for {player_name} with {score}")
                     await async_save_to_leaderboard(player_name, score)
-                    current_leaderboard = await async_load_leaderboard()
+                    current_leaderboard = await async_load_leaderboard() 
                     score_submitted = True
                     submitting_score = False
-
-                game_state = GAME_OVER     
-            asyncio.create_task(submit_and_load())            
-
-  
-        
+                    game_state = GAME_OVER 
+                asyncio.create_task(submit_and_load())            
+                
+                
         elif game_state == GAME_OVER:
             #Draw game over screen
             title_surface = font.render("Game Over", True, text_color)
@@ -657,9 +665,8 @@ async def main():
                 word_speed = 1.5  
                 spawn_rate = 1.5
                 player_name = ""  
-
         elif game_state == LEADERBOARD: 
-            # Draw leaderbord screen
+            # Draw leaderbord screen 
             leaderboard_surface = font.render("Leaderboard", True, text_color)
             leaderboard_rect = leaderboard_surface.get_rect(center=(WIDTH // 2, HEIGHT // 4 - 100))
             screen.blit(leaderboard_surface, leaderboard_rect)
@@ -669,8 +676,7 @@ async def main():
             for i, entry in enumerate(leaderboard):
                 name = entry["name"]
                 score = entry ["score"]
-
-
+                
                 text = f"{i+1}. {name}: {score}"
                 entry_surface = small_font.render(text, True, text_color)
                 screen.blit(entry_surface, (WIDTH // 2 - 200, HEIGHT // 4 + i * 40))
@@ -682,10 +688,6 @@ async def main():
             if gback_button.collidepoint(mouse_pos) and mouse_click[0]:
                 game_state = GAME_OVER
 
-        # If score submission finished, move to GAME_OVER screen
-        if score_submitted:
-            score_submitted = False
-            game_state = GAME_OVER
         
 
         #Update the display 60fps
