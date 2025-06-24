@@ -4,6 +4,8 @@ import sys
 from pygame.locals import *
 import json
 import asyncio
+import urllib.request
+
 try:
     from js import window
 except ImportError:
@@ -12,14 +14,14 @@ except ImportError:
 pygame.init()
 
 #Screen size
-WIDTH, HEIGHT = 800, 600
+WIDTH, HEIGHT = 1280,720
 screen = pygame.display.set_mode((WIDTH, HEIGHT), pygame.RESIZABLE)
 pygame.display.set_caption("SkyTyper!")
 
 #Backgrounds
 SKYDAY = pygame.image.load("sky_day.jpg")
 SKYNIGHT = pygame.image.load("sky_night.jpg") 
-background_image = SKYDAY  #Default
+background_image = SKYDAY  #Default 
 background_scaled = pygame.transform.scale(background_image, (WIDTH, HEIGHT))
 
 #Colors
@@ -45,13 +47,21 @@ PLAYING = "playing"
 GAME_OVER = "game_over"
 ENTER_NAME = "enter_name"
 LEADERBOARD = "leaderboard"
+INSTRUCTIONS = "instructions"
 game_state = START
+
+#Leaderboard sheets
+SHEET_URL = "https://sheetdb.io/api/v1/edxt1oxhbgexd"
+current_leaderboard = []
+submitting_score = False
+score_submitted = False
+
 
 
 
 #Word lists
-word_list = ["apple", "banana", "cat", "dog", "elephant", "flower", "grapes", "honey", "idea", "juice",  ]
-word_list_hard = ["algorithm", "binary", "california", "dragonfruit", "encryption", "firewall", "gateway", "hypertext"]
+word_list = ["Apple", "Banana", "Cat", "Dog", "Eel", "Flower", "Grapes", "Honey", "Idea", "Juice", "Key", "Lemon","Monkey", "Night", "Owl", "Play"]
+word_list_hard = ["Algorithm", "Binary", "California", "Dragonfruit", "Encryption", "Fireball", "Gatekeeper", "Hypertext", "Intelligence", "Kaleidoscope", "Laboratory", "Monkeytype", "Nitrotype", "Organization"]
 
 #Load heart images
 HEART_IMAGE = pygame.image.load("heart.png").convert_alpha()  # Ensure you have a heart.png file
@@ -180,50 +190,65 @@ def draw_combo(combo_active, combo_count, combo_lost, combo_start_time, last_com
         if elapsed < combo_display_time:
             alpha = max(0, 255 - int(255 * (elapsed / combo_display_time)))
             combo_text = f"COMBO x{combo_count}!"
-            combo_surface = small_font.render(combo_text, True, GREEN)
+            combo_surface = font.render(combo_text, True, GREEN)
             combo_surface.set_alpha(alpha)
-            screen.blit(combo_surface, (WIDTH - combo_surface.get_width() - 20, HEIGHT - 40))
+            screen.blit(combo_surface, (WIDTH // 2 - combo_surface.get_width() // 2, 40))
     elif combo_lost:
         elapsed = current_time - combo_start_time
         if elapsed < combo_display_time:
             alpha = max(0, 255 - int(255 * (elapsed / combo_display_time)))
             loss_text = "COMBO LOST!"
-            loss_surface = small_font.render(loss_text, True, RED)
-            screen.blit(loss_surface, (WIDTH - loss_surface.get_width() - 20, HEIGHT - 40))
+            loss_surface = font.render(loss_text, True, RED)
+            screen.blit(loss_surface, (WIDTH // 2  - loss_surface.get_width() // 2, 40))
 
-# Save score
-def save_to_leaderboard(name, score):
-    if window:
-        leaderboard_json = window.localStorage.getItem("leaderboard")
-        leaderboard = json.loads(leaderboard_json) if leaderboard_json else []
-        leaderboard.append({"name": name, "score": score})
-        leaderboard.sort(key=lambda x: x["score"], reverse=True)
-        leaderboard = leaderboard[:5]  # Top 5
-        window.localStorage.setItem("leaderboard", json.dumps(leaderboard))
-
-# Load scores
-def load_leaderboard():
-    if window:
-        leaderboard_json = window.localStorage.getItem("leaderboard")
-        return json.loads(leaderboard_json) if leaderboard_json else []
-    else:
+async def async_load_leaderboard():
+    try:
+        resp = await js.fetch(SHEET_URL)
+        text = await resp.text()
+        data = json.loads(text)
+        return sorted(data, key=lambda x: int(x['score']), reverse=True)[:5]
+    except Exception as e:
+        print("Failed to load leaderboard:", e)
         return []
 
+async def async_save_to_leaderboard(name, score):
+    try:
+        payload = {
+            "data": [{"name": name, "score": str(score)}]
+        }
+        req_data = js.JSON.stringify(payload)
+        response = await js.fetch(
+            SHEET_URL,
+            {
+                "method": "POST",
+                "headers": js.Object.fromEntries([
+                    ["Content-Type", "application/json"]
+                ]),
+                "body": req_data
+            }
+        )
+        status = response.status
+        text = await response.text()
+    # Help me
+        print(f"POST status: {status}, response: {text}")
+    except Exception as e:
+        print("Failed to save score:", e)
 
 
+        
 #Game variables
 text_color = BLACK
 lives = 3
 score = 0
 falling_words = []
-word_speed = 1
-spawn_rate = 2
+word_speed = 1.5
+spawn_rate = 1.5
 word_speed_add = 0.0001
 spawn_rate_add = 0.0001
 input_text = ""
 button_width = 400
 start_time = pygame.time.get_ticks()
-MAX_WORDS_ON_SCREEN = 15
+MAX_WORDS_ON_SCREEN = 20
 
 #Combo
 combo_count = 0
@@ -264,6 +289,7 @@ async def main():
     global WIDTH, HEIGHT, screen, background_image, background_scaled, text_color, is_fullscreen, windowed_size
     global HEART_IMAGE, EMPTY_HEART_IMAGE, HEART_SIZE
     global font, small_font, clock, button_width
+    global score_submitted, submitting_score
 
     running = True
     while running:
@@ -405,10 +431,59 @@ async def main():
             draw_button("Settings", settings_button.x, settings_button.y, settings_button.width, settings_button.height, BLUE, settings_button.collidepoint(mouse_pos))
             if settings_button.collidepoint(mouse_pos) and mouse_click[0]:
                 game_state = SETTINGS
-                
+
+            # Instructions button
+            instruction_button = pygame.Rect(WIDTH // 2- button_width//2, HEIGHT // 2 + 150, button_width, 50)
+            draw_button("Instructions", instruction_button.x, instruction_button.y, instruction_button.width, instruction_button.height, BLUE, instruction_button.collidepoint(mouse_pos))
+            if instruction_button.collidepoint(mouse_pos) and mouse_click[0]:
+                game_state = INSTRUCTIONS
+
+        elif game_state == INSTRUCTIONS:
+            # Draw instructions screen
+            title_surface = font.render("Instructions", True, text_color)
+            title_rect = title_surface.get_rect(center=(WIDTH // 2, HEIGHT // 4 - 100))
+            screen.blit(title_surface, title_rect)
+
+            instructions = [
+                [('- Type the words that fall from the sky!', text_color)],
+                [('-', text_color), ('Normal words', BLUE), ('are worth', text_color), ('100 points...', BLUE)],
+                [('  ... while', text_color), ('hard words', PINK), ('are worth', text_color), ('500!', PINK)],
+                [('- Consecutive words add to a', text_color), ('combo...', GREEN)],
+                [('  ... which gives ', text_color), ('bonus score!', GREEN)],
+                [('- But making mistakes will', text_color), ('lose', RED), ('the combo!', text_color)]
+            ] 
+            
+                      
+            # Instruction box dimensions
+            box_width = 1080
+            box_height = len(instructions) * 40 + 40
+            box_x = WIDTH // 2 - box_width // 2
+            box_y = HEIGHT // 4 
+
+            # Semi-transparent box surface
+            instruction_box = pygame.Surface((box_width, box_height), pygame.SRCALPHA)
+            instruction_box.fill((255, 255, 255, 100))  # RGBA: black with alpha 180 (semi-transparent)
+
+            screen.blit(instruction_box, (box_x, box_y))
+        
+            for i, line_parts in enumerate(instructions):
+                x_cursor = WIDTH // 8  # Start x position
+                y = HEIGHT // 4 + 40 + i * 40  # y position for the line
+
+                for word, color in line_parts:
+                    word_surface = small_font.render(word + " ", True, color)
+                    screen.blit(word_surface, (x_cursor, y))
+                    x_cursor += word_surface.get_width()
+            
+
+            # Back button
+            back_button = pygame.Rect(WIDTH // 2 - button_width // 2, HEIGHT // 2 + 200, button_width, 50)
+            draw_button("Back", back_button.x, back_button.y, back_button.width, back_button.height, RED, back_button.collidepoint(mouse_pos))
+            if back_button.collidepoint(mouse_pos) and mouse_click[0]:
+                game_state = START
 
         elif game_state == SETTINGS:
-            # Draw settings screen
+            # Draw settings screen 
             title_surface = font.render("Settings", True, text_color)
             title_rect = title_surface.get_rect(center=(WIDTH // 2, HEIGHT // 2 - 200))
             screen.blit(title_surface, title_rect)
@@ -429,23 +504,23 @@ async def main():
                 background_scaled = pygame.transform.scale(background_image, (WIDTH, HEIGHT))
                 text_color = WHITE
 
-            # Full-screen button
-            fullscreen_button = pygame.Rect(WIDTH // 2 - button_width // 2, HEIGHT // 2 + 100, button_width, 50)
-            draw_button("Display", fullscreen_button.x, fullscreen_button.y, fullscreen_button.width, fullscreen_button.height, BLUE, fullscreen_button.collidepoint(mouse_pos))
-            if fullscreen_button.collidepoint(mouse_pos) and mouse_click[0]:
-                if not is_fullscreen:
-                    windowed_size = (WIDTH, HEIGHT)  # Save current size
-                    screen = pygame.display.set_mode((0, 0), pygame.FULLSCREEN)
-                    WIDTH, HEIGHT = screen.get_size()
-                    is_fullscreen = True
-                else:
-                    screen = pygame.display.set_mode(windowed_size, pygame.RESIZABLE)
-                    WIDTH, HEIGHT = windowed_size
-                    is_fullscreen = False
-                background_scaled = pygame.transform.scale(background_image, (WIDTH, HEIGHT))
+            # Full-screen button (not used for browser)
+            #fullscreen_button = pygame.Rect(WIDTH // 2 - button_width // 2, HEIGHT // 2 + 100, button_width, 50)
+            #draw_button("Display", fullscreen_button.x, fullscreen_button.y, fullscreen_button.width, fullscreen_button.height, BLUE, fullscreen_button.collidepoint(mouse_pos))
+            #if fullscreen_button.collidepoint(mouse_pos) and mouse_click[0]:
+                #if not is_fullscreen:
+                    #windowed_size = (WIDTH, HEIGHT)  # Save current size
+                    #screen = pygame.display.set_mode((0, 0), pygame.FULLSCREEN)
+                    #WIDTH, HEIGHT = screen.get_size()
+                    #is_fullscreen = True
+                #else:
+                    #screen = pygame.display.set_mode(windowed_size, pygame.RESIZABLE)
+                    #WIDTH, HEIGHT = windowed_size
+                    #is_fullscreen = False
+                #background_scaled = pygame.transform.scale(background_image, (WIDTH, HEIGHT))
 
             # Back button
-            back_button = pygame.Rect(WIDTH // 2 - button_width // 2, HEIGHT // 2 + 200, button_width, 50)
+            back_button = pygame.Rect(WIDTH // 2 - button_width // 2, HEIGHT // 2 + 100, button_width, 50)
             draw_button("Back", back_button.x, back_button.y, back_button.width, back_button.height, RED, back_button.collidepoint(mouse_pos))
             if back_button.collidepoint(mouse_pos) and mouse_click[0]:
                 game_state = START
@@ -507,15 +582,22 @@ async def main():
             score_surface = font.render(f"Score: {score}", True, text_color)
             timer_surface = font.render(f"Time: {elapsed_time}", True, text_color)
             screen.blit(score_surface, (10, 10))
-            screen.blit(timer_surface, (WIDTH - 275, 10))
+            screen.blit(timer_surface, (WIDTH - 300, 10))
             draw_hearts(lives)
             draw_combo(combo_active, combo_count, combo_lost, combo_start_time, last_combo, combo_display_time)
 
 
         elif game_state == ENTER_NAME:
+
+            if submitting_score:
+                loading_surface = small_font.render("Submitting Score...", True, text_color)
+                loading_rect = loading_surface.get_rect(center=(WIDTH // 2, HEIGHT // 2 + 90))
+                screen.blit(loading_surface, loading_rect)
+
+
             #Enter name screen
             title_surface = font.render("Enter Your Name!", True, text_color)
-            title_rect = title_surface.get_rect(center=(WIDTH // 2, HEIGHT // 4))
+            title_rect = title_surface.get_rect(center=(WIDTH // 2, HEIGHT // 2 - 100))
             screen.blit(title_surface, title_rect)
 
             #Input box 
@@ -528,23 +610,26 @@ async def main():
 
             # Submit button
             is_name_entered = len(player_name.strip()) > 0
-            home_button = pygame.Rect(WIDTH // 2 - button_width // 2, HEIGHT // 2 + 100, button_width, 50)
+            home_button = pygame.Rect(WIDTH // 2 - button_width // 2, HEIGHT // 2 + 150, button_width, 50)
             
             hovering = home_button.collidepoint(mouse_pos)
             draw_button("Submit", home_button.x, home_button.y, home_button.width, home_button.height, BLUE if is_name_entered else GRAY, hovering)
 
-            if hovering and mouse_click[0] and is_name_entered:
+            if hovering and mouse_click[0] and is_name_entered and not submitting_score:
+                submitting_score = True
 
-                # Save to leaderboard
-                save_to_leaderboard(player_name, score)
+                async def submit_and_load():
+                    global current_leaderboard, score_submitted, submitting_score
 
-                # Get rank
-                leaderboard = load_leaderboard().copy()
-                rank = next((i for i, entry in enumerate(leaderboard) if entry["name"] == player_name and entry["score"] == score), None)
+                    await async_save_to_leaderboard(player_name, score)
+                    current_leaderboard = await async_load_leaderboard()
+                    score_submitted = True
+                    submitting_score = False
 
+                game_state = GAME_OVER     
+            asyncio.create_task(submit_and_load())            
 
-                game_state = GAME_OVER
-                
+  
         
         elif game_state == GAME_OVER:
             #Draw game over screen
@@ -556,12 +641,12 @@ async def main():
             score_rect = score_surface.get_rect(center=(WIDTH // 2, HEIGHT // 2 - 25))
             screen.blit(score_surface, score_rect)
             #Leaderboards button
-            leader_button = pygame.Rect(WIDTH // 2 - button_width // 2, HEIGHT // 2 + 50 , button_width, 50)
+            leader_button = pygame.Rect(WIDTH // 2 - button_width // 2, HEIGHT // 2 + 100 , button_width, 50)
             draw_button("Leaderboards", leader_button.x, leader_button.y, leader_button.width, leader_button.height, BLUE, leader_button.collidepoint(mouse_pos))
             if leader_button.collidepoint(mouse_pos) and mouse_click[0]:
                 game_state = LEADERBOARD
             #Return to home button
-            home_button = pygame.Rect(WIDTH // 2 - button_width // 2, HEIGHT // 2 + 150, button_width, 50)
+            home_button = pygame.Rect(WIDTH // 2 - button_width // 2, HEIGHT // 2 + 200, button_width, 50)
             draw_button("Home", home_button.x, home_button.y, home_button.width, home_button.height, BLUE, home_button.collidepoint(mouse_pos))
             if home_button.collidepoint(mouse_pos) and mouse_click[0]:
                 game_state = START
@@ -569,18 +654,18 @@ async def main():
                 lives = 3  
                 score = 0  
                 falling_words = []  
-                word_speed = 1  
-                spawn_rate = 2
+                word_speed = 1.5  
+                spawn_rate = 1.5
                 player_name = ""  
 
-        elif game_state == LEADERBOARD:
+        elif game_state == LEADERBOARD: 
             # Draw leaderbord screen
             leaderboard_surface = font.render("Leaderboard", True, text_color)
             leaderboard_rect = leaderboard_surface.get_rect(center=(WIDTH // 2, HEIGHT // 4 - 100))
             screen.blit(leaderboard_surface, leaderboard_rect)
             
-            leaderboard = load_leaderboard()
-
+            leaderboard = current_leaderboard
+            
             for i, entry in enumerate(leaderboard):
                 name = entry["name"]
                 score = entry ["score"]
@@ -597,11 +682,19 @@ async def main():
             if gback_button.collidepoint(mouse_pos) and mouse_click[0]:
                 game_state = GAME_OVER
 
+        # If score submission finished, move to GAME_OVER screen
+        if score_submitted:
+            score_submitted = False
+            game_state = GAME_OVER
+        
 
         #Update the display 60fps
         pygame.display.flip()
         clock.tick(60)
+        await asyncio.sleep(0)
+    
 
 if __name__ == "__main__":
     asyncio.run(main())
+
 
