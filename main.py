@@ -7,9 +7,17 @@ import asyncio
 import urllib.request
 
 try:
+    import js
     from js import window
-except ImportError:
-    window = None
+    import builtins
+
+    if hasattr(js, "console") and hasattr(js.console, "log"):
+        builtins.print = js.console.log  # Redirect print to browser console
+        js.console.log("Fetch is available" if hasattr(js, "fetch") else "Fetch NOT available")
+except Exception as e:
+    print(f"[Warning] JS bridge not available: {e}")
+
+
 
 pygame.init()
 
@@ -51,7 +59,7 @@ INSTRUCTIONS = "instructions"
 game_state = START
 
 #Leaderboard sheets
-SHEET_URL = 'https://sheetdb.io/api/v1/edxt1oxhbgexd'
+SHEET_URL = 'https://sheetdb.io/api/v1/z85655ej9lxg9'  
 current_leaderboard = []
 submitting_score = False
 score_submitted = False
@@ -201,41 +209,118 @@ def draw_combo(combo_active, combo_count, combo_lost, combo_start_time, last_com
             loss_surface = font.render(loss_text, True, RED)
             screen.blit(loss_surface, (WIDTH // 2  - loss_surface.get_width() // 2, 40))
 
-async def async_load_leaderboard():
-    try:
-        resp = await js.fetch(SHEET_URL)
-        text = await resp.text()
-        data = json.loads(text)
-        return sorted(data, key=lambda x: int(x['score']), reverse=True)[:5]
-    except Exception as e:
-        print("Failed to load leaderboard:", e)
-        return []
+def submit_score_to_sheetdb(name, score, on_success=None):
+    global score_submitted, submitting_score
+    submitting_score = True
+    print(f"Submitting score to URL: {SHEET_URL}")
 
-async def async_save_to_leaderboard(name, score):
-    try:
-        payload = {
-            "data": [{"name": name, "score": str(score)}]
+    data = {
+        "data": {
+            "name": name,
+            "score": score
         }
-        req_data = js.JSON.stringify(payload)
-        response = await js.fetch(
-            SHEET_URL,
-            {
-                "method": "POST",
-                "headers": js.Object.fromEntries([
-                    ["Content-Type", "application/json"]
-                ]),
-                "body": req_data
-            }
-        )
-        status = response.status
-        text = await response.text()
-    # Help me
-        print(f"POST status: {status}, response: {text}")
-    except Exception as e:
-        print("Failed to save score:", e)
+    }
+
+    if 'js' in globals():
+        import js
+
+        def handle_response(res):
+            global submitting_score, score_submitted
+            print("Score submitted (browser)")
+            submitting_score = False
+            score_submitted = True
+            if on_success:
+                on_success()
+
+        def handle_error(err):
+            global submitting_score
+            print("Browser score submit failed:", err)
+            submitting_score = False
+
+        try:
+            js.fetch(
+                SHEET_URL,
+                {
+                    "method": "POST",
+                    "headers": {
+                        "Content-Type": "application/json"
+                    },
+                    "body": js.JSON.stringify(data)
+                }
+            ).then(
+                js.python_function(handle_response)
+            ).catch(
+                js.python_function(handle_error)
+            )
+        except Exception as e:
+            print("js.fetch threw exception:", e)
+            submitting_score = False
+
+        # Fallback timeout: reset after 10 seconds if no response
+        async def reset_flag_after_timeout():
+            await asyncio.sleep(10)
+            global submitting_score
+            if submitting_score:
+                print("Submission timeout reached, resetting flag")
+                submitting_score = False
+
+        asyncio.create_task(reset_flag_after_timeout())
+    else:
+        try:
+            import requests
+            res = requests.post(SHEET_URL, json=data)
+            if res.status_code == 201:
+                print("Score submitted (requests)")
+                score_submitted = True
+                submitting_score = False
+                if on_success:
+                    on_success()
+            else:
+                print("Requests error:", res.text)
+                submitting_score = False
+        except Exception as e:
+            print("Local requests error:", e)
+            submitting_score = False
 
 
-        
+
+
+
+
+def fetch_leaderboard():
+    global current_leaderboard
+
+    def set_and_sort_leaderboard(data):
+        # Sort in descending order by integer score
+        sorted_data = sorted(data, key=lambda x: int(x.get("score", 0)), reverse=True)
+        current_leaderboard[:] = sorted_data[:10]  # Top 10
+
+    if 'js' in globals():
+        import js
+
+        def on_success(response):
+            response.json().then(set_and_sort_leaderboard)
+
+        def on_error(err):
+            print("Failed to fetch leaderboard (browser):", err)
+
+        js.fetch(SHEET_URL).then(on_success).catch(on_error)
+
+    else:
+        try:
+            import requests
+            res = requests.get(SHEET_URL)
+            if res.status_code == 200:
+                data = res.json()
+                set_and_sort_leaderboard(data)
+            else:
+                print("Request failed:", res.text)
+        except Exception as e:
+            print("Local fetch error:", e)
+
+
+
+
 #Game variables
 text_color = BLACK
 lives = 3
@@ -281,6 +366,7 @@ windowed_size = (WIDTH, HEIGHT)
 
 #Main loop
 async def main():
+
 
     global input_text, clear_input, backspace_held, backspace_start_time, last_backspace_time, BACKSPACE_HOLD, BACKSPACE_REPEAT
     global combo_active, combo_count, combo_start_time, combo_lost, last_combo, in_a_row, combo_display_time
@@ -589,10 +675,6 @@ async def main():
         elif game_state == ENTER_NAME:
 
             
-            if submitting_score:
-                loading_surface = small_font.render("Submitting Score...", True, text_color)
-                loading_rect = loading_surface.get_rect(center=(WIDTH // 2, HEIGHT // 2 + 90))
-                screen.blit(loading_surface, loading_rect)
 
 
             #Enter name screen
@@ -610,35 +692,24 @@ async def main():
 
             # Submit button
             is_name_entered = len(player_name.strip()) > 0
-            home_button = pygame.Rect(WIDTH // 2 - button_width // 2, HEIGHT // 2 + 150, button_width, 50)
+            submit_button = pygame.Rect(WIDTH // 2 - button_width // 2, HEIGHT // 2 + 150, button_width, 50)
+            draw_button("Submit", submit_button.x, submit_button.y, submit_button.width, submit_button.height, BLUE if is_name_entered else GRAY, submit_button.collidepoint(mouse_pos))
             
-            hovering = home_button.collidepoint(mouse_pos)
-            draw_button("Submit", home_button.x, home_button.y, home_button.width, home_button.height, BLUE if is_name_entered else GRAY, hovering)
-            
-
-            # Please work 
-            print("Hovering:", hovering)
-            print("Mouse click:", mouse_click[0])
-            print("Name entered:", is_name_entered)
-            print("Already submitting:", submitting_score)
+            print(f"DEBUG: submitting_score = {submitting_score}")
 
 
-            if hovering and mouse_click[0] and is_name_entered and not submitting_score:
+            if submit_button.collidepoint(mouse_pos) and mouse_click[0] and is_name_entered and not submitting_score:
                 print("Clicked Submit")
                 submitting_score = True
-
-                async def submit_and_load():
-                    global current_leaderboard, score_submitted, submitting_score, game_state
-
-                    print(f"Submitting score for {player_name} with {score}")
-                    await async_save_to_leaderboard(player_name, score)
-                    current_leaderboard = await async_load_leaderboard() 
-                    score_submitted = True
-                    submitting_score = False
-                    game_state = GAME_OVER 
-                asyncio.create_task(submit_and_load())            
+                print(f"DEBUG: submitting_score = {submitting_score}")
+                def go_to_game_over():
+                    global game_state
+                    print("Submission success callback fired")
+                    game_state = GAME_OVER
                 
-                
+                submit_score_to_sheetdb(player_name, score, on_success=go_to_game_over)
+
+
         elif game_state == GAME_OVER:
             #Draw game over screen
             title_surface = font.render("Game Over", True, text_color)
@@ -652,6 +723,7 @@ async def main():
             leader_button = pygame.Rect(WIDTH // 2 - button_width // 2, HEIGHT // 2 + 100 , button_width, 50)
             draw_button("Leaderboards", leader_button.x, leader_button.y, leader_button.width, leader_button.height, BLUE, leader_button.collidepoint(mouse_pos))
             if leader_button.collidepoint(mouse_pos) and mouse_click[0]:
+                fetch_leaderboard()
                 game_state = LEADERBOARD
             #Return to home button
             home_button = pygame.Rect(WIDTH // 2 - button_width // 2, HEIGHT // 2 + 200, button_width, 50)
@@ -665,21 +737,23 @@ async def main():
                 word_speed = 1.5  
                 spawn_rate = 1.5
                 player_name = ""  
-        elif game_state == LEADERBOARD: 
-            # Draw leaderbord screen 
+
+        elif game_state == LEADERBOARD:
             leaderboard_surface = font.render("Leaderboard", True, text_color)
             leaderboard_rect = leaderboard_surface.get_rect(center=(WIDTH // 2, HEIGHT // 4 - 100))
             screen.blit(leaderboard_surface, leaderboard_rect)
-            
-            leaderboard = current_leaderboard
-            
-            for i, entry in enumerate(leaderboard):
-                name = entry["name"]
-                score = entry ["score"]
-                
-                text = f"{i+1}. {name}: {score}"
-                entry_surface = small_font.render(text, True, text_color)
+
+            for i, entry in enumerate(current_leaderboard):
+                name = entry.get("name", "Anonymous")
+                score_val = entry.get("score", "0")
+                entry_text = f"{i+1}. {name}: {score_val}"
+                entry_surface = small_font.render(entry_text, True, text_color)
                 screen.blit(entry_surface, (WIDTH // 2 - 200, HEIGHT // 4 + i * 40))
+
+            back_button = pygame.Rect(WIDTH // 2 - button_width // 2, HEIGHT - 100, button_width, 50)
+            draw_button("Back", back_button.x, back_button.y, back_button.width, back_button.height, RED, back_button.collidepoint(mouse_pos))
+            if back_button.collidepoint(mouse_pos) and mouse_click[0]:
+                game_state = GAME_OVER
 
 
             #Return to home button
