@@ -38,8 +38,10 @@ BLACK = (0, 0, 0)
 RED = (255, 71, 77)
 BLUE = (95, 144, 250)
 GREEN = (57, 248, 72)
+TEXT_GREEN = (119,228,119)
 PINK = (255, 105, 180)
 GRAY = (251, 251, 251)
+YELLOW = (255, 255, 0)
 
 #Fonts
 font = pygame.font.Font("PressStart2P-Regular.ttf", 32)
@@ -184,17 +186,31 @@ def draw_hearts(lives):
             screen.blit(EMPTY_HEART_IMAGE, (x, y))  
 
 # Function to draw combo
-def draw_combo(combo_level, combo_lost, combo_start_time, last_combo, combo_display_time):
+def draw_combo(combo_level, combo_lost_time, last_combo, combo_display_time):
     current_time = pygame.time.get_ticks()
+    
+    # Show combo when active
     if combo_level > 0:
-        elapsed = current_time -last_combo
+        elapsed = current_time - last_combo
         if elapsed < combo_display_time:
             alpha = max(0, 255 - int(255 * (elapsed / combo_display_time)))
             combo_text = f"COMBO x{combo_level}!"
             combo_surface = font.render(combo_text, True, GREEN)
             combo_surface.set_alpha(alpha)
             screen.blit(combo_surface, (WIDTH // 2 - combo_surface.get_width() // 2, 40))
-
+    
+    # FIXED: Show "COMBO LOST!" when combo is lost
+    elif combo_lost_time > 0:  # NEW: Check if we have a lost time recorded
+        elapsed = current_time - combo_lost_time
+        if elapsed < combo_display_time:
+            alpha = max(0, 255 - int(255 * (elapsed / combo_display_time)))
+            lost_text = "COMBO LOST!"
+            lost_surface = font.render(lost_text, True, RED)
+            lost_surface.set_alpha(alpha)
+            screen.blit(lost_surface, (WIDTH // 2 - lost_surface.get_width() // 2, 40))
+        else:
+            # FIXED: Clear the combo_lost_time after display period ends
+            combo_lost_time = 0
 
 
 
@@ -216,9 +232,7 @@ MAX_WORDS_ON_SCREEN = 20
 
 combo_level = 0
 combo_start_time = 0
-combo_lost = False
-
-# combo display type
+combo_lost_time = 0
 combo_display_time = 3000
 last_combo = 0
 
@@ -241,18 +255,27 @@ is_fullscreen = False
 windowed_size = (WIDTH, HEIGHT)
 hard_mode = False
 prev_mouse_click = False
+
+# Achievement tracking - ADD THESE
+max_score = 0
+max_hard_score = 0
+scroll_offset = 0  # For scrolling
+SCROLL_SPEED = 20
+
 #Main loop
 async def main():
 
 
     global input_text, clear_input, backspace_held, backspace_start_time, last_backspace_time, BACKSPACE_HOLD, BACKSPACE_REPEAT
-    global combo_level, combo_start_time, combo_lost, last_combo, combo_display_time
+    global combo_level, combo_start_time, last_combo, combo_display_time, combo_lost_time
     global player_name, active_input, input_box
     global game_state, lives, score, falling_words, word_speed, spawn_rate, word_speed_add, spawn_rate_add, MAX_WORDS_ON_SCREEN
     global WIDTH, HEIGHT, screen, background_image, background_scaled, text_color, is_fullscreen, windowed_size
     global HEART_IMAGE, EMPTY_HEART_IMAGE, HEART_SIZE
     global font, small_font, clock, button_width
     global hard_mode, prev_mouse_click
+    global hard_mode, prev_mouse_click
+    global max_score, max_hard_score, scroll_offset  # Add these
 
 
     running = True
@@ -278,10 +301,10 @@ async def main():
                             backspace_start_time = current_time
 
                             # Combo lost
+                            if combo_level > 0:  # Only show "COMBO LOST!" if there was actually a combo
+                                combo_lost_time = pygame.time.get_ticks()  # NEW: Record when combo was lost
                             combo_level = 0
-                            combo_lost = True
-                            combo_start_time = pygame.time.get_ticks()
-                            last_combo = pygame.time.get_ticks()
+
 
                         else:
                             if event.unicode.isalpha():
@@ -306,12 +329,18 @@ async def main():
                                         combo_level += 1
                                         bonus_points = combo_level * 10
                                         score += (base_points + bonus_points)
+                                        
+                                        # Achievemnets
+                                        if hard_mode:
+                                            max_hard_score = max(max_hard_score, score)
+                                        else:
+                                            max_score = max(max_score, score)
 
                                         clear_input = True
                                         completed_word = True
 
                                         #Combo display
-                                        combo_lost = False
+                                        
                                         last_combo = pygame.time.get_ticks()
                                 else:
                                     word.progress = 0
@@ -321,6 +350,16 @@ async def main():
                                 input_text = ""
                                 clear_input = False
 
+                # Scroll
+                elif event.type == pygame.MOUSEBUTTONDOWN:
+                    if game_state == START and hard_mode_button.collidepoint(event.pos):
+                        hard_mode = not hard_mode
+                    # Scroll handling
+                    elif game_state == ACHIEVEMENTS:
+                        if event.button == 4:  # Scroll up
+                            scroll_offset = max(0, scroll_offset - SCROLL_SPEED)
+                        elif event.button == 5:  # Scroll down
+                            scroll_offset = min(200, scroll_offset + SCROLL_SPEED)  # Limit scroll
                     
                 #Stop deleting
                 elif event.type == pygame.KEYUP:
@@ -335,10 +374,10 @@ async def main():
                             input_text = input_text[:-1]
 
                             # Combo lost
+                            if combo_level > 0:  # Only show "COMBO LOST!" if there was actually a combo
+                                combo_lost_time = pygame.time.get_ticks()  # NEW: Record when combo was lost
                             combo_level = 0
-                            combo_lost = True
-                            combo_start_time = pygame.time.get_ticks()
-                            last_combo = pygame.time.get_ticks()
+
 
                             last_backspace_time = current_time
                         for word in falling_words:
@@ -380,6 +419,12 @@ async def main():
                 draw_button("Instructions", instruction_button.x, instruction_button.y, instruction_button.width, instruction_button.height, BLUE, instruction_button.collidepoint(mouse_pos))
                 if instruction_button.collidepoint(mouse_pos) and mouse_click[0]:
                     game_state = INSTRUCTIONS
+                
+                # Achievements button
+                achievements_button = pygame.Rect(WIDTH // 2 - button_width // 2, HEIGHT // 2 + 250, button_width, 50)
+                draw_button("Achievements", achievements_button.x, achievements_button.y, achievements_button.width, achievements_button.height, YELLOW, achievements_button.collidepoint(mouse_pos))
+                if achievements_button.collidepoint(mouse_pos) and mouse_click[0]:
+                    game_state = ACHIEVEMENTS
 
             elif game_state == INSTRUCTIONS:
                 # Draw instructions screen
@@ -391,9 +436,10 @@ async def main():
                     [('- Type the words that fall from the sky!', text_color)],
                     [('-', text_color), ('Normal words', BLUE), ('are worth', text_color), ('100 points...', BLUE)],
                     [('  ... while', text_color), ('hard words', PINK), ('are worth', text_color), ('500!', PINK)],
-                    [('- Consecutive words add to a', text_color), ('combo...', GREEN)],
-                    [('  ... which gives ', text_color), ('bonus score!', GREEN)],
-                    [('- But making mistakes will', text_color), ('lose', RED), ('the combo!', text_color)]
+                    [('- Consecutive words add to a', text_color), ('combo...', TEXT_GREEN)],
+                    [('  ... which gives', text_color), ('bonus score!', TEXT_GREEN)],
+                    [('- But making mistakes will', text_color), ('lose', RED), ('the combo!', text_color)],
+                    [('BONUS!', text_color), ("Hard Mode", RED), ("for a extra challenge!", text_color)]
                 ] 
                 
                         
@@ -492,10 +538,9 @@ async def main():
                         lives -= 1
 
                         # Combo lost
+                        if combo_level > 0:  # Only show "COMBO LOST!" if there was actually a combo
+                            combo_lost_time = pygame.time.get_ticks()  # NEW: Record when combo was lost
                         combo_level = 0
-                        combo_lost = True
-                        combo_start_time = pygame.time.get_ticks()
-                        last_combo = pygame.time.get_ticks()
 
 
                         falling_words.remove(word)
@@ -523,7 +568,8 @@ async def main():
                 screen.blit(score_surface, (10, 10))
                 screen.blit(timer_surface, (WIDTH - 300, 10))
                 draw_hearts(lives)
-                draw_combo(combo_level, combo_lost, combo_start_time, last_combo, combo_display_time)
+                draw_combo(combo_level, combo_lost_time, last_combo, combo_display_time)
+
 
             elif game_state == GAME_OVER:
                 #Draw game over screen
@@ -549,7 +595,111 @@ async def main():
                     player_name = ""  
                     hard_mode = False
 
+            elif game_state == ACHIEVEMENTS:
+                # Achievement definitions
+                achievements = [
+                    # Score achievements
+                    {"name": "Getting Started", "desc": "Score 10,000 points", "unlocked": max_score >= 10000},
+                    {"name": "High Scorer", "desc": "Score 20,000 points", "unlocked": max_score >= 20000},
+                    {"name": "Score Master", "desc": "Score 50,000 points", "unlocked": max_score >= 50000},
+                    # Hard mode achievements  
+                    {"name": "Hard Starter", "desc": "Score 10,000 points in Hard Mode", "unlocked": max_hard_score >= 10000},
+                    {"name": "Hard Scorer", "desc": "Score 20,000 points in Hard Mode", "unlocked": max_hard_score >= 20000},
+                    {"name": "Hard Master", "desc": "Score 50,000 points in Hard Mode", "unlocked": max_hard_score >= 50000},
+                    # Future achievements (locked)
+                    {"name": "???", "desc": "Coming soon...", "unlocked": False},
+                    {"name": "???", "desc": "Coming soon...", "unlocked": False},
+                ]
 
+                # Achievement display settings
+                achievement_width = 380
+                achievement_height = 100   # Increased from 80
+                achievements_per_row = 3
+                spacing_x = 20
+                spacing_y = 120  # Increased spacing for taller boxes
+                start_x = WIDTH // 2 - (achievements_per_row * achievement_width + (achievements_per_row - 1) * spacing_x) // 2
+                start_y = HEIGHT // 4 - 50 - scroll_offset 
+
+
+                # Draw achievements
+                for i, achievement in enumerate(achievements):
+                    row = i // achievements_per_row
+                    col = i % achievements_per_row
+                    
+                    x = start_x + col * (achievement_width + spacing_x)
+                    y = start_y + row * spacing_y
+                    
+                    # Only draw if visible on screen AND below the title bar
+                    if y + achievement_height > 80 and y < HEIGHT:
+
+                        if text_color == BLACK:  # Day mode
+                            dynamic_inactive = WHITE
+                            dynamic_hover = BLUE
+                        else:  # Night mode
+                            dynamic_inactive = BLUE
+                            dynamic_hover = (70, 120, 200)
+
+                        # Achievement box
+                        achievement_rect = pygame.Rect(x, y, achievement_width, achievement_height)
+                        is_hovering = achievement_rect.collidepoint(mouse_pos)
+                        if achievement["unlocked"]:
+                            box_color = dynamic_hover if is_hovering else dynamic_inactive
+                        else:
+                            box_color = dynamic_hover if is_hovering else dynamic_inactive                 
+                        pygame.draw.rect(screen, box_color, achievement_rect)
+
+                        # Border color based on unlock status
+                        border_color = GREEN if achievement["unlocked"] else text_color
+                        pygame.draw.rect(screen, border_color, achievement_rect, 3)
+                        
+                        # Achievement text with line wrapping
+                        name_surface = small_font.render(achievement["name"], True, text_color)
+                        
+                        # Split long descriptions into two lines
+                        desc = achievement["desc"]
+                        if "in Hard Mode" in desc:
+                            line1 = desc.replace(" in Hard Mode", "")
+                            line2 = "in Hard Mode"
+                        else:
+                            line1 = desc
+                            line2 = ""
+                        
+                        desc1_surface = pygame.font.Font("PressStart2P-Regular.ttf", 16).render(line1, True, text_color)
+                        desc2_surface = pygame.font.Font("PressStart2P-Regular.ttf", 16).render(line2, True, text_color) if line2 else None
+                        
+                        # Center the text with proper spacing
+                        name_rect = name_surface.get_rect(center=(x + achievement_width // 2, y + 20))
+                        desc1_rect = desc1_surface.get_rect(center=(x + achievement_width // 2, y + 50))
+                        
+                        screen.blit(name_surface, name_rect)
+                        screen.blit(desc1_surface, desc1_rect)
+                        if desc2_surface:
+                            desc2_rect = desc2_surface.get_rect(center=(x + achievement_width // 2, y + 70))
+                            screen.blit(desc2_surface, desc2_rect)
+
+                # Draw FIXED title bar at top
+                title_bar_height = 80
+                title_bar = pygame.Surface((WIDTH, title_bar_height), pygame.SRCALPHA)
+                title_bar.fill((179, 235, 242, 190)) #179,235,242
+                screen.blit(title_bar, (0, 0))
+                
+                title_surface = font.render("Achievements", True, WHITE)
+                title_rect = title_surface.get_rect(center=(WIDTH // 2, title_bar_height // 2))
+                screen.blit(title_surface, title_rect)
+
+                # Scroll indicator
+                if len(achievements) > 6:
+                    scroll_text = "Scroll to see more"
+                    scroll_surface = pygame.font.Font("PressStart2P-Regular.ttf", 16).render(scroll_text, True, text_color)
+                    scroll_rect = scroll_surface.get_rect(center=(WIDTH // 2, HEIGHT - 100))
+                    screen.blit(scroll_surface, scroll_rect)
+
+                # Back button at bottom
+                back_button = pygame.Rect(WIDTH // 2 - button_width // 2, HEIGHT - 60, button_width, 50)
+                draw_button("Back", back_button.x, back_button.y, back_button.width, back_button.height, RED, back_button.collidepoint(mouse_pos))
+                if back_button.collidepoint(mouse_pos) and mouse_click[0]:
+                    game_state = START
+                    scroll_offset = 0
                     
             #Update the display 60fps
             pygame.display.flip()
