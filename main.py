@@ -53,16 +53,9 @@ START = "start"
 SETTINGS = "settings"
 PLAYING = "playing"
 GAME_OVER = "game_over"
-ENTER_NAME = "enter_name"
-LEADERBOARD = "leaderboard"
 INSTRUCTIONS = "instructions"
+ACHIEVEMENTS = "achievements" 
 game_state = START
-
-#Leaderboard sheets
-SHEET_URL = 'https://sheetdb.io/api/v1/z85655ej9lxg9'  
-current_leaderboard = []
-submitting_score = False
-score_submitted = False
 
 
 
@@ -191,132 +184,16 @@ def draw_hearts(lives):
             screen.blit(EMPTY_HEART_IMAGE, (x, y))  
 
 # Function to draw combo
-def draw_combo(combo_active, combo_count, combo_lost, combo_start_time, last_combo, combo_display_time):
+def draw_combo(combo_level, combo_lost, combo_start_time, last_combo, combo_display_time):
     current_time = pygame.time.get_ticks()
-    if combo_active and combo_count > 0:
-        elapsed = current_time - last_combo
+    if combo_level > 0:
+        elapsed = current_time -last_combo
         if elapsed < combo_display_time:
             alpha = max(0, 255 - int(255 * (elapsed / combo_display_time)))
-            combo_text = f"COMBO x{combo_count}!"
+            combo_text = f"COMBO x{combo_level}!"
             combo_surface = font.render(combo_text, True, GREEN)
             combo_surface.set_alpha(alpha)
             screen.blit(combo_surface, (WIDTH // 2 - combo_surface.get_width() // 2, 40))
-    elif combo_lost:
-        elapsed = current_time - combo_start_time
-        if elapsed < combo_display_time:
-            alpha = max(0, 255 - int(255 * (elapsed / combo_display_time)))
-            loss_text = "COMBO LOST!"
-            loss_surface = font.render(loss_text, True, RED)
-            screen.blit(loss_surface, (WIDTH // 2  - loss_surface.get_width() // 2, 40))
-
-def submit_score_to_sheetdb(name, score, on_success=None):
-    global score_submitted, submitting_score
-    submitting_score = True
-    print(f"Submitting score to URL: {SHEET_URL}")
-
-    data = {
-        "data": {
-            "name": name,
-            "score": score
-        }
-    }
-
-    if 'js' in globals():
-        import js
-
-        def handle_response(res):
-            global submitting_score, score_submitted
-            print("Score submitted (browser)")
-            submitting_score = False
-            score_submitted = True
-            if on_success:
-                on_success()
-
-        def handle_error(err):
-            global submitting_score
-            print("Browser score submit failed:", err)
-            submitting_score = False
-
-        try:
-            js.fetch(
-                SHEET_URL,
-                {
-                    "method": "POST",
-                    "headers": {
-                        "Content-Type": "application/json"
-                    },
-                    "body": js.JSON.stringify(data)
-                }
-            ).then(
-                js.python_function(handle_response)
-            ).catch(
-                js.python_function(handle_error)
-            )
-        except Exception as e:
-            print("js.fetch threw exception:", e)
-            submitting_score = False
-
-        # Fallback timeout: reset after 10 seconds if no response
-        async def reset_flag_after_timeout():
-            await asyncio.sleep(10)
-            global submitting_score
-            if submitting_score:
-                print("Submission timeout reached, resetting flag")
-                submitting_score = False
-
-        asyncio.create_task(reset_flag_after_timeout())
-    else:
-        try:
-            import requests
-            res = requests.post(SHEET_URL, json=data)
-            if res.status_code == 201:
-                print("Score submitted (requests)")
-                score_submitted = True
-                submitting_score = False
-                if on_success:
-                    on_success()
-            else:
-                print("Requests error:", res.text)
-                submitting_score = False
-        except Exception as e:
-            print("Local requests error:", e)
-            submitting_score = False
-
-
-
-
-
-
-def fetch_leaderboard():
-    global current_leaderboard
-
-    def set_and_sort_leaderboard(data):
-        # Sort in descending order by integer score
-        sorted_data = sorted(data, key=lambda x: int(x.get("score", 0)), reverse=True)
-        current_leaderboard[:] = sorted_data[:10]  # Top 10
-
-    if 'js' in globals():
-        import js
-
-        def on_success(response):
-            response.json().then(set_and_sort_leaderboard)
-
-        def on_error(err):
-            print("Failed to fetch leaderboard (browser):", err)
-
-        js.fetch(SHEET_URL).then(on_success).catch(on_error)
-
-    else:
-        try:
-            import requests
-            res = requests.get(SHEET_URL)
-            if res.status_code == 200:
-                data = res.json()
-                set_and_sort_leaderboard(data)
-            else:
-                print("Request failed:", res.text)
-        except Exception as e:
-            print("Local fetch error:", e)
 
 
 
@@ -335,14 +212,13 @@ button_width = 400
 start_time = pygame.time.get_ticks()
 MAX_WORDS_ON_SCREEN = 20
 
-#Combo
-combo_count = 0
-combo_active = False
+# Combo
+
+combo_level = 0
 combo_start_time = 0
 combo_lost = False
-in_a_row = 0
 
-#combo display type
+# combo display type
 combo_display_time = 3000
 last_combo = 0
 
@@ -359,415 +235,331 @@ last_backspace_time = 0
 BACKSPACE_HOLD = 500
 BACKSPACE_REPEAT = 100
 
-#Screen size
+
 clear_input = False  
 is_fullscreen = False
 windowed_size = (WIDTH, HEIGHT)
-
+hard_mode = False
+prev_mouse_click = False
 #Main loop
 async def main():
 
 
     global input_text, clear_input, backspace_held, backspace_start_time, last_backspace_time, BACKSPACE_HOLD, BACKSPACE_REPEAT
-    global combo_active, combo_count, combo_start_time, combo_lost, last_combo, in_a_row, combo_display_time
+    global combo_level, combo_start_time, combo_lost, last_combo, combo_display_time
     global player_name, active_input, input_box
     global game_state, lives, score, falling_words, word_speed, spawn_rate, word_speed_add, spawn_rate_add, MAX_WORDS_ON_SCREEN
     global WIDTH, HEIGHT, screen, background_image, background_scaled, text_color, is_fullscreen, windowed_size
     global HEART_IMAGE, EMPTY_HEART_IMAGE, HEART_SIZE
     global font, small_font, clock, button_width
-    global score_submitted, submitting_score
+    global hard_mode, prev_mouse_click
+
 
     running = True
     while running:
         mouse_pos = pygame.mouse.get_pos()
         mouse_click = pygame.mouse.get_pressed()
         current_time = pygame.time.get_ticks()
+        try:
+            for event in pygame.event.get():
+                if event.type == pygame.QUIT:
+                    running = False
 
-        for event in pygame.event.get():
-            if event.type == pygame.QUIT:
-                running = False
 
+                elif event.type == pygame.VIDEORESIZE:
+                    # Handle screen resizing
+                    resize_screen(event.w, event.h)
 
-            elif event.type == pygame.VIDEORESIZE:
-                # Handle screen resizing
-                resize_screen(event.w, event.h)
+                elif event.type == pygame.KEYDOWN:
+                    if game_state == PLAYING:
+                        if event.key == pygame.K_BACKSPACE:
+                            input_text = input_text[:-1]  
+                            backspace_held = True
+                            backspace_start_time = current_time
 
-            elif event.type == pygame.KEYDOWN:
-                if game_state == PLAYING:
-                    if event.key == pygame.K_BACKSPACE:
-                        input_text = input_text[:-1]  
-                        backspace_held = True
-                        backspace_start_time = current_time
+                            # Combo lost
+                            combo_level = 0
+                            combo_lost = True
+                            combo_start_time = pygame.time.get_ticks()
+                            last_combo = pygame.time.get_ticks()
 
-                        # Combo lost
-                        combo_active = False
-                        combo_count = 0
-                        in_a_row = 0
-                        combo_lost = True
-                        combo_start_time = pygame.time.get_ticks()
-                        last_combo = pygame.time.get_ticks()
-                    else:
-                        if event.unicode.isalpha():
-                            if clear_input:
+                        else:
+                            if event.unicode.isalpha():
+                                if clear_input:
+                                    input_text = ""
+                                    clear_input = False
+                                input_text += event.unicode  #add typed character
+                            
+                            completed_word = False
+
+                            #Update for words that match the input
+                            for word in falling_words:
+                                if word.text.startswith(input_text):
+                                    word.progress = len(input_text)
+                                    word.check_completion()
+                                    if word.completed:
+                                        if word.is_hard and lives < 3 and not hard_mode:
+                                            lives += 1
+
+                                        #Points
+                                        base_points = 500 if word.is_hard else 100
+                                        combo_level += 1
+                                        bonus_points = combo_level * 10
+                                        score += (base_points + bonus_points)
+
+                                        clear_input = True
+                                        completed_word = True
+
+                                        #Combo display
+                                        combo_lost = False
+                                        last_combo = pygame.time.get_ticks()
+                                else:
+                                    word.progress = 0
+
+                            #Clear input when word is completed
+                            if completed_word and clear_input:
                                 input_text = ""
                                 clear_input = False
-                            input_text += event.unicode  #add typed character
-                        
-                        completed_word = False
 
-                        #Update for words that match the input
+                    
+                #Stop deleting
+                elif event.type == pygame.KEYUP:
+                    if event.key == pygame.K_BACKSPACE:
+                        backspace_held = False
+
+            #Held Deletion    
+            if backspace_held and game_state == PLAYING:
+                if current_time - backspace_start_time >= BACKSPACE_HOLD:
+                    if current_time - last_backspace_time >= BACKSPACE_REPEAT:
+                        if input_text:
+                            input_text = input_text[:-1]
+
+                            # Combo lost
+                            combo_level = 0
+                            combo_lost = True
+                            combo_start_time = pygame.time.get_ticks()
+                            last_combo = pygame.time.get_ticks()
+
+                            last_backspace_time = current_time
                         for word in falling_words:
                             if word.text.startswith(input_text):
                                 word.progress = len(input_text)
-                                word.check_completion()
-                                if word.completed:
-                                    if word.is_hard and lives < 3:
-                                        lives += 1
-
-                                    #Points
-                                    base_points = 500 if word.is_hard else 100
-                                    bonus_points = (10* combo_count) if combo_active else 0
-                                    score += (base_points + bonus_points)
-
-
-                                    clear_input = True
-                                    completed_word = True
-
-                                    #Combo
-                                    in_a_row += 1
-                                    if in_a_row >= 5:
-                                        combo_active = True
-                                        combo_count += 1
-                                        combo_start_time = pygame.time.get_ticks()
-                                        combo_lost = False
-                                        last_combo = pygame.time.get_ticks()
                             else:
                                 word.progress = 0
 
-                        #Clear input when word is completed
-                        if completed_word and clear_input:
-                            input_text = ""
-                            clear_input = False
-                elif game_state == ENTER_NAME and active_input: 
-                    if event.key == pygame.K_BACKSPACE:
-                        player_name = player_name[:-1]
-                    elif len(player_name) < 20 and event.unicode.isprintable():
-                        player_name += event.unicode
-            
 
-            elif event.type == pygame.MOUSEBUTTONDOWN:
-                if game_state == ENTER_NAME:
-                    # Activate input box on click
-                    if input_box.collidepoint(event.pos):
-                        active_input = True
-                    else:
-                        active_input = False
+            #Clear Screen
+            screen.blit(background_scaled, (0, 0))
+
+            #Title Screen
+            if game_state == START:
+
+                title_surface = font.render("SkyTyper!", True, text_color)
+                title_rect = title_surface.get_rect(center=(WIDTH // 2, HEIGHT // 4))
+                screen.blit(title_surface, title_rect)
+
+                #Start button
+                start_button = pygame.Rect(WIDTH // 2 - button_width // 2, HEIGHT // 2 - 50, button_width, 50)
+                draw_button("Start", start_button.x, start_button.y, start_button.width, start_button.height, GREEN, start_button.collidepoint(mouse_pos))
+                if start_button.collidepoint(mouse_pos) and mouse_click[0]:
+                    game_state = PLAYING
+                    lives = 3  
+                    score = 0  
+                    falling_words = []  
+                    input_text = ''
+                    start_time = pygame.time.get_ticks()  
+
+                # Settings button
+                settings_button = pygame.Rect(WIDTH // 2 - button_width // 2, HEIGHT // 2 + 50, button_width, 50)
+                draw_button("Settings", settings_button.x, settings_button.y, settings_button.width, settings_button.height, BLUE, settings_button.collidepoint(mouse_pos))
+                if settings_button.collidepoint(mouse_pos) and mouse_click[0]:
+                    game_state = SETTINGS
+
+                # Instructions button
+                instruction_button = pygame.Rect(WIDTH // 2- button_width//2, HEIGHT // 2 + 150, button_width, 50)
+                draw_button("Instructions", instruction_button.x, instruction_button.y, instruction_button.width, instruction_button.height, BLUE, instruction_button.collidepoint(mouse_pos))
+                if instruction_button.collidepoint(mouse_pos) and mouse_click[0]:
+                    game_state = INSTRUCTIONS
+
+            elif game_state == INSTRUCTIONS:
+                # Draw instructions screen
+                title_surface = font.render("Instructions", True, text_color)
+                title_rect = title_surface.get_rect(center=(WIDTH // 2, HEIGHT // 4 - 100))
+                screen.blit(title_surface, title_rect)
+
+                instructions = [
+                    [('- Type the words that fall from the sky!', text_color)],
+                    [('-', text_color), ('Normal words', BLUE), ('are worth', text_color), ('100 points...', BLUE)],
+                    [('  ... while', text_color), ('hard words', PINK), ('are worth', text_color), ('500!', PINK)],
+                    [('- Consecutive words add to a', text_color), ('combo...', GREEN)],
+                    [('  ... which gives ', text_color), ('bonus score!', GREEN)],
+                    [('- But making mistakes will', text_color), ('lose', RED), ('the combo!', text_color)]
+                ] 
                 
-            #Stop deleting
-            elif event.type == pygame.KEYUP:
-                if event.key == pygame.K_BACKSPACE:
-                    backspace_held = False
+                        
+                # Instruction box dimensions
+                box_width = 1080
+                box_height = len(instructions) * 40 + 40
+                box_x = WIDTH // 2 - box_width // 2
+                box_y = HEIGHT // 4 
 
-        #Held Deletion    
-        if backspace_held and game_state == PLAYING:
-            if current_time - backspace_start_time >= BACKSPACE_HOLD:
-                if current_time - last_backspace_time >= BACKSPACE_REPEAT:
-                    if input_text:
-                        input_text = input_text[:-1]
+                # Semi-transparent box surface
+                instruction_box = pygame.Surface((box_width, box_height), pygame.SRCALPHA)
+                instruction_box.fill((255, 255, 255, 100))  # RGBA: black with alpha 180 (semi-transparent)
+
+                screen.blit(instruction_box, (box_x, box_y))
+            
+                for i, line_parts in enumerate(instructions):
+                    x_cursor = WIDTH // 8  # Start x position
+                    y = HEIGHT // 4 + 40 + i * 40  # y position for the line
+
+                    for word, color in line_parts:
+                        word_surface = small_font.render(word + " ", True, color)
+                        screen.blit(word_surface, (x_cursor, y))
+                        x_cursor += word_surface.get_width()
+                
+
+                # Back button
+                back_button = pygame.Rect(WIDTH // 2 - button_width // 2, HEIGHT // 2 + 200, button_width, 50)
+                draw_button("Back", back_button.x, back_button.y, back_button.width, back_button.height, RED, back_button.collidepoint(mouse_pos))
+                if back_button.collidepoint(mouse_pos) and mouse_click[0]:
+                    game_state = START
+
+            elif game_state == SETTINGS:
+                # Draw settings screen 
+                title_surface = font.render("Settings", True, text_color)
+                title_rect = title_surface.get_rect(center=(WIDTH // 2, HEIGHT // 2 - 200))
+                screen.blit(title_surface, title_rect)
+
+                # Day background button
+                day_button = pygame.Rect(WIDTH // 2 - button_width // 2, HEIGHT // 2-100, button_width, 50)
+                draw_button("Day time", day_button.x, day_button.y, day_button.width, day_button.height, BLUE, day_button.collidepoint(mouse_pos))
+                if day_button.collidepoint(mouse_pos) and mouse_click[0]:
+                    background_image = SKYDAY  # Set to day background
+                    background_scaled = pygame.transform.scale(background_image, (WIDTH, HEIGHT))
+                    text_color = BLACK
+
+                # Night background button
+                night_button = pygame.Rect(WIDTH // 2 - button_width // 2, HEIGHT // 2, button_width, 50)
+                draw_button("Night time ", night_button.x, night_button.y, night_button.width, night_button.height, BLUE, night_button.collidepoint(mouse_pos))
+                if night_button.collidepoint(mouse_pos) and mouse_click[0]:
+                    background_image = SKYNIGHT  # Set to night background
+                    background_scaled = pygame.transform.scale(background_image, (WIDTH, HEIGHT))
+                    text_color = WHITE
+
+                # Hard mode toggle button
+                hard_mode_button = pygame.Rect(WIDTH // 2 - button_width // 2, HEIGHT // 2 + 100, button_width, 50)
+                button_text = "Hard Mode: ON" if hard_mode else "Hard Mode: OFF"
+                button_color = RED if hard_mode else BLUE
+                draw_button(button_text, hard_mode_button.x, hard_mode_button.y, hard_mode_button.width, hard_mode_button.height, button_color, hard_mode_button.collidepoint(mouse_pos))
+
+                # Only toggle if mouse was just pressed (not held)
+                if hard_mode_button.collidepoint(mouse_pos) and mouse_click[0] and not prev_mouse_click:
+                    hard_mode = not hard_mode
+
+                # Update previous mouse state at the end of the main loop
+                prev_mouse_click = mouse_click[0]
+
+                # Back button
+                back_button = pygame.Rect(WIDTH // 2 - button_width // 2, HEIGHT // 2 + 200, button_width, 50)
+                draw_button("Back", back_button.x, back_button.y, back_button.width, back_button.height, RED, back_button.collidepoint(mouse_pos))
+                if back_button.collidepoint(mouse_pos) and mouse_click[0]:
+                    game_state = START
+
+            elif game_state == PLAYING:
+                # Add new words, no duplicates and overlaps
+                if random.randint(1, 100) < spawn_rate and len(falling_words) < MAX_WORDS_ON_SCREEN:
+                    is_hard = random.randint(1, 5) == 1 if hard_mode else random.randint(1, 20) == 1
+                    word_pool = word_list_hard if is_hard else word_list
+                    new_word_text = random.choice(word_pool)
+                    if count_word_instances(new_word_text) < 1:
+                        speed = word_speed * 1.25 if is_hard else word_speed  # Hard words fall faster
+                        new_word = FallingWord(new_word_text, speed, is_hard)
+
+                        # Ensure the new word does not overlap with existing words
+                        attempts = 0
+                        while is_overlapping(new_word, falling_words) and attempts < 100:
+                            new_word.x = random.randint(50, WIDTH - new_word.width - 50)
+                            attempts += 1
+
+                        if attempts < 100:  # Only add the word if a valid position is found
+                            falling_words.append(new_word)
+
+                # Update word positions and remove completed words after 1 second
+                for word in falling_words[:]:  
+                    word.move()
+                    if word.off_screen():
+                        lives -= 1
 
                         # Combo lost
-                        combo_active = False
-                        combo_count = 0
-                        in_a_row = 0
+                        combo_level = 0
                         combo_lost = True
                         combo_start_time = pygame.time.get_ticks()
                         last_combo = pygame.time.get_ticks()
 
-                        last_backspace_time = current_time
-                    for word in falling_words:
-                        if word.text.startswith(input_text):
-                            word.progress = len(input_text)
-                        else:
-                            word.progress = 0
 
+                        falling_words.remove(word)
+                        if lives == 0:
+                            game_state = GAME_OVER
+                    elif word.completed and pygame.time.get_ticks() - word.completion_time >= 1000:
+                        falling_words.remove(word)  # Remove the word after glowing for 1 second
 
-        #Clear Screen
-        screen.blit(background_scaled, (0, 0))
+                #Increase speed over time
+                word_speed += word_speed_add
+                spawn_rate += spawn_rate_add
 
-        #Title Screen
-        if game_state == START:
+                #Draw falling words
+                for word in falling_words:
+                    word.draw(screen)
 
-            title_surface = font.render("SkyTyper!", True, text_color)
-            title_rect = title_surface.get_rect(center=(WIDTH // 2, HEIGHT // 4))
-            screen.blit(title_surface, title_rect)
+                #Draw input text
+                input_surface = font.render(input_text, True, text_color)
+                screen.blit(input_surface, (10, HEIGHT - 50))
 
-            #Start button
-            start_button = pygame.Rect(WIDTH // 2 - button_width // 2, HEIGHT // 2 - 50, button_width, 50)
-            draw_button("Start", start_button.x, start_button.y, start_button.width, start_button.height, GREEN, start_button.collidepoint(mouse_pos))
-            if start_button.collidepoint(mouse_pos) and mouse_click[0]:
-                game_state = PLAYING
-                lives = 3  
-                score = 0  
-                falling_words = []  
-                input_text = ''
-                start_time = pygame.time.get_ticks()  
+                #Draw score, timer, and hearts
+                elapsed_time = (pygame.time.get_ticks() - start_time) // 1000  
+                score_surface = font.render(f"Score: {score}", True, text_color)
+                timer_surface = font.render(f"Time: {elapsed_time}", True, text_color)
+                screen.blit(score_surface, (10, 10))
+                screen.blit(timer_surface, (WIDTH - 300, 10))
+                draw_hearts(lives)
+                draw_combo(combo_level, combo_lost, combo_start_time, last_combo, combo_display_time)
 
-            # Settings button
-            settings_button = pygame.Rect(WIDTH // 2 - button_width // 2, HEIGHT // 2 + 50, button_width, 50)
-            draw_button("Settings", settings_button.x, settings_button.y, settings_button.width, settings_button.height, BLUE, settings_button.collidepoint(mouse_pos))
-            if settings_button.collidepoint(mouse_pos) and mouse_click[0]:
-                game_state = SETTINGS
-
-            # Instructions button
-            instruction_button = pygame.Rect(WIDTH // 2- button_width//2, HEIGHT // 2 + 150, button_width, 50)
-            draw_button("Instructions", instruction_button.x, instruction_button.y, instruction_button.width, instruction_button.height, BLUE, instruction_button.collidepoint(mouse_pos))
-            if instruction_button.collidepoint(mouse_pos) and mouse_click[0]:
-                game_state = INSTRUCTIONS
-
-        elif game_state == INSTRUCTIONS:
-            # Draw instructions screen
-            title_surface = font.render("Instructions", True, text_color)
-            title_rect = title_surface.get_rect(center=(WIDTH // 2, HEIGHT // 4 - 100))
-            screen.blit(title_surface, title_rect)
-
-            instructions = [
-                [('- Type the words that fall from the sky!', text_color)],
-                [('-', text_color), ('Normal words', BLUE), ('are worth', text_color), ('100 points...', BLUE)],
-                [('  ... while', text_color), ('hard words', PINK), ('are worth', text_color), ('500!', PINK)],
-                [('- Consecutive words add to a', text_color), ('combo...', GREEN)],
-                [('  ... which gives ', text_color), ('bonus score!', GREEN)],
-                [('- But making mistakes will', text_color), ('lose', RED), ('the combo!', text_color)]
-            ] 
-            
-                      
-            # Instruction box dimensions
-            box_width = 1080
-            box_height = len(instructions) * 40 + 40
-            box_x = WIDTH // 2 - box_width // 2
-            box_y = HEIGHT // 4 
-
-            # Semi-transparent box surface
-            instruction_box = pygame.Surface((box_width, box_height), pygame.SRCALPHA)
-            instruction_box.fill((255, 255, 255, 100))  # RGBA: black with alpha 180 (semi-transparent)
-
-            screen.blit(instruction_box, (box_x, box_y))
-        
-            for i, line_parts in enumerate(instructions):
-                x_cursor = WIDTH // 8  # Start x position
-                y = HEIGHT // 4 + 40 + i * 40  # y position for the line
-
-                for word, color in line_parts:
-                    word_surface = small_font.render(word + " ", True, color)
-                    screen.blit(word_surface, (x_cursor, y))
-                    x_cursor += word_surface.get_width()
-            
-
-            # Back button
-            back_button = pygame.Rect(WIDTH // 2 - button_width // 2, HEIGHT // 2 + 200, button_width, 50)
-            draw_button("Back", back_button.x, back_button.y, back_button.width, back_button.height, RED, back_button.collidepoint(mouse_pos))
-            if back_button.collidepoint(mouse_pos) and mouse_click[0]:
-                game_state = START
-
-        elif game_state == SETTINGS:
-            # Draw settings screen 
-            title_surface = font.render("Settings", True, text_color)
-            title_rect = title_surface.get_rect(center=(WIDTH // 2, HEIGHT // 2 - 200))
-            screen.blit(title_surface, title_rect)
-
-            # Day background button
-            day_button = pygame.Rect(WIDTH // 2 - button_width // 2, HEIGHT // 2-100, button_width, 50)
-            draw_button("Day time", day_button.x, day_button.y, day_button.width, day_button.height, BLUE, day_button.collidepoint(mouse_pos))
-            if day_button.collidepoint(mouse_pos) and mouse_click[0]:
-                background_image = SKYDAY  # Set to day background
-                background_scaled = pygame.transform.scale(background_image, (WIDTH, HEIGHT))
-                text_color = BLACK
-
-            # Night background button
-            night_button = pygame.Rect(WIDTH // 2 - button_width // 2, HEIGHT // 2, button_width, 50)
-            draw_button("Night time ", night_button.x, night_button.y, night_button.width, night_button.height, BLUE, night_button.collidepoint(mouse_pos))
-            if night_button.collidepoint(mouse_pos) and mouse_click[0]:
-                background_image = SKYNIGHT  # Set to night background
-                background_scaled = pygame.transform.scale(background_image, (WIDTH, HEIGHT))
-                text_color = WHITE
-
-            # Full-screen button (not used for browser)
-            #fullscreen_button = pygame.Rect(WIDTH // 2 - button_width // 2, HEIGHT // 2 + 100, button_width, 50)
-            #draw_button("Display", fullscreen_button.x, fullscreen_button.y, fullscreen_button.width, fullscreen_button.height, BLUE, fullscreen_button.collidepoint(mouse_pos))
-            #if fullscreen_button.collidepoint(mouse_pos) and mouse_click[0]:
-                #if not is_fullscreen:
-                    #windowed_size = (WIDTH, HEIGHT)  # Save current size
-                    #screen = pygame.display.set_mode((0, 0), pygame.FULLSCREEN)
-                    #WIDTH, HEIGHT = screen.get_size()
-                    #is_fullscreen = True
-                #else:
-                    #screen = pygame.display.set_mode(windowed_size, pygame.RESIZABLE)
-                    #WIDTH, HEIGHT = windowed_size
-                    #is_fullscreen = False
-                #background_scaled = pygame.transform.scale(background_image, (WIDTH, HEIGHT))
-
-            # Back button
-            back_button = pygame.Rect(WIDTH // 2 - button_width // 2, HEIGHT // 2 + 100, button_width, 50)
-            draw_button("Back", back_button.x, back_button.y, back_button.width, back_button.height, RED, back_button.collidepoint(mouse_pos))
-            if back_button.collidepoint(mouse_pos) and mouse_click[0]:
-                game_state = START
-
-        elif game_state == PLAYING:
-            # Add new words, no duplicates and overlaps
-            if random.randint(1, 100) < spawn_rate and len(falling_words) < MAX_WORDS_ON_SCREEN:
-                is_hard = random.randint(1, 20) == 1
-                word_pool = word_list_hard if is_hard else word_list
-                new_word_text = random.choice(word_pool)
-                if count_word_instances(new_word_text) < 1:
-                    speed = word_speed * 1.25 if is_hard else word_speed  # Hard words fall faster
-                    new_word = FallingWord(new_word_text, speed, is_hard)
-
-                    # Ensure the new word does not overlap with existing words
-                    attempts = 0
-                    while is_overlapping(new_word, falling_words) and attempts < 100:
-                        new_word.x = random.randint(50, WIDTH - new_word.width - 50)
-                        attempts += 1
-
-                    if attempts < 100:  # Only add the word if a valid position is found
-                        falling_words.append(new_word)
-
-            # Update word positions and remove completed words after 1 second
-            for word in falling_words[:]:  
-                word.move()
-                if word.off_screen():
-                    lives -= 1
-
-                    # Combo lost
-                    combo_active = False
-                    combo_count = 0
-                    in_a_row = 0
-                    combo_lost = True
-                    combo_start_time = pygame.time.get_ticks()
-                    last_combo = pygame.time.get_ticks()
-
-
-                    falling_words.remove(word)
-                    if lives == 0:
-                        game_state = ENTER_NAME  # Switch to entername screen
-                elif word.completed and pygame.time.get_ticks() - word.completion_time >= 1000:
-                    falling_words.remove(word)  # Remove the word after glowing for 1 second
-
-            #Increase speed over time
-            word_speed += word_speed_add
-            spawn_rate += spawn_rate_add
-
-            #Draw falling words
-            for word in falling_words:
-                word.draw(screen)
-
-            #Draw input text
-            input_surface = font.render(input_text, True, text_color)
-            screen.blit(input_surface, (10, HEIGHT - 50))
-
-            #Draw score, timer, and hearts
-            elapsed_time = (pygame.time.get_ticks() - start_time) // 1000  
-            score_surface = font.render(f"Score: {score}", True, text_color)
-            timer_surface = font.render(f"Time: {elapsed_time}", True, text_color)
-            screen.blit(score_surface, (10, 10))
-            screen.blit(timer_surface, (WIDTH - 300, 10))
-            draw_hearts(lives)
-            draw_combo(combo_active, combo_count, combo_lost, combo_start_time, last_combo, combo_display_time)
-
-        elif game_state == ENTER_NAME:
-
-            
-
-
-            #Enter name screen
-            title_surface = font.render("Enter Your Name!", True, text_color)
-            title_rect = title_surface.get_rect(center=(WIDTH // 2, HEIGHT // 2 - 100))
-            screen.blit(title_surface, title_rect)
-
-            #Input box 
-            input_box = pygame.Rect(WIDTH // 2 - 150, HEIGHT // 2, 300, 50)
-            box_color = BLUE if active_input else GRAY
-            pygame.draw.rect(screen, box_color, input_box, 2)
-
-            name_surface = font.render(player_name, True, text_color)
-            screen.blit(name_surface, (input_box.x + 10, input_box.y + 10))
-
-            # Submit button
-            is_name_entered = len(player_name.strip()) > 0
-            submit_button = pygame.Rect(WIDTH // 2 - button_width // 2, HEIGHT // 2 + 150, button_width, 50)
-            draw_button("Submit", submit_button.x, submit_button.y, submit_button.width, submit_button.height, BLUE if is_name_entered else GRAY, submit_button.collidepoint(mouse_pos))
-            
-            print(f"DEBUG: submitting_score = {submitting_score}")
-
-
-            if submit_button.collidepoint(mouse_pos) and mouse_click[0] and is_name_entered and not submitting_score:
-                print("Clicked Submit")
-                submitting_score = True
-                print(f"DEBUG: submitting_score = {submitting_score}")
-                def go_to_game_over():
-                    global game_state
-                    print("Submission success callback fired")
-                    game_state = GAME_OVER
+            elif game_state == GAME_OVER:
+                #Draw game over screen
+                title_surface = font.render("Game Over", True, text_color)
+                title_rect = title_surface.get_rect(center=(WIDTH // 2, HEIGHT // 4 + 50))
+                screen.blit(title_surface, title_rect)
+                #Score
+                score_surface = font.render(f"score:{score}", True, text_color)
+                score_rect = score_surface.get_rect(center=(WIDTH // 2, HEIGHT // 2 - 25))
+                screen.blit(score_surface, score_rect)
                 
-                submit_score_to_sheetdb(player_name, score, on_success=go_to_game_over)
+                #Return to home button
+                home_button = pygame.Rect(WIDTH // 2 - button_width // 2, HEIGHT // 2 + 100, button_width, 50)
+                draw_button("Home", home_button.x, home_button.y, home_button.width, home_button.height, BLUE, home_button.collidepoint(mouse_pos))
+                if home_button.collidepoint(mouse_pos) and mouse_click[0]:
+                    game_state = START
+                    #Reset allat
+                    lives = 3  
+                    score = 0  
+                    falling_words = []  
+                    word_speed = 1.5  
+                    spawn_rate = 1.5
+                    player_name = ""  
+                    hard_mode = False
 
 
-        elif game_state == GAME_OVER:
-            #Draw game over screen
-            title_surface = font.render("Game Over", True, text_color)
-            title_rect = title_surface.get_rect(center=(WIDTH // 2, HEIGHT // 4 + 50))
-            screen.blit(title_surface, title_rect)
-            #Score
-            score_surface = font.render(f"{player_name}:{score}", True, text_color)
-            score_rect = score_surface.get_rect(center=(WIDTH // 2, HEIGHT // 2 - 25))
-            screen.blit(score_surface, score_rect)
-            #Leaderboards button
-            leader_button = pygame.Rect(WIDTH // 2 - button_width // 2, HEIGHT // 2 + 100 , button_width, 50)
-            draw_button("Leaderboards", leader_button.x, leader_button.y, leader_button.width, leader_button.height, BLUE, leader_button.collidepoint(mouse_pos))
-            if leader_button.collidepoint(mouse_pos) and mouse_click[0]:
-                fetch_leaderboard()
-                game_state = LEADERBOARD
-            #Return to home button
-            home_button = pygame.Rect(WIDTH // 2 - button_width // 2, HEIGHT // 2 + 200, button_width, 50)
-            draw_button("Home", home_button.x, home_button.y, home_button.width, home_button.height, BLUE, home_button.collidepoint(mouse_pos))
-            if home_button.collidepoint(mouse_pos) and mouse_click[0]:
-                game_state = START
-                #Reset allat
-                lives = 3  
-                score = 0  
-                falling_words = []  
-                word_speed = 1.5  
-                spawn_rate = 1.5
-                player_name = ""  
-
-        elif game_state == LEADERBOARD:
-            leaderboard_surface = font.render("Leaderboard", True, text_color)
-            leaderboard_rect = leaderboard_surface.get_rect(center=(WIDTH // 2, HEIGHT // 4 - 100))
-            screen.blit(leaderboard_surface, leaderboard_rect)
-
-            for i, entry in enumerate(current_leaderboard):
-                name = entry.get("name", "Anonymous")
-                score_val = entry.get("score", "0")
-                entry_text = f"{i+1}. {name}: {score_val}"
-                entry_surface = small_font.render(entry_text, True, text_color)
-                screen.blit(entry_surface, (WIDTH // 2 - 200, HEIGHT // 4 + i * 40))
-
-            back_button = pygame.Rect(WIDTH // 2 - button_width // 2, HEIGHT - 100, button_width, 50)
-            draw_button("Back", back_button.x, back_button.y, back_button.width, back_button.height, RED, back_button.collidepoint(mouse_pos))
-            if back_button.collidepoint(mouse_pos) and mouse_click[0]:
-                game_state = GAME_OVER
-
-
-            #Return to home button
-            gback_button = pygame.Rect(WIDTH // 2 - button_width // 2, HEIGHT - 100, button_width, 50)
-            draw_button("Back", gback_button.x, gback_button.y, gback_button.width, gback_button.height, RED, gback_button.collidepoint(mouse_pos))
-            if gback_button.collidepoint(mouse_pos) and mouse_click[0]:
-                game_state = GAME_OVER
-
+                    
+            #Update the display 60fps
+            pygame.display.flip()
+            clock.tick(60) 
+            await asyncio.sleep(0)
         
-
-        #Update the display 60fps
-        pygame.display.flip()
-        clock.tick(60)
-        await asyncio.sleep(0)
+        except Exception as e:
+            print(f"[Debug] Main loop exception: {e}")
+            error_message = f"Main loop error: {str(e)}"
+            error_start_time = pygame.time.get_ticks()
     
 
 if __name__ == "__main__":
